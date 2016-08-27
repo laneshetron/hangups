@@ -12,6 +12,7 @@ import readlike
 
 from Bank.Hangouts import Bank
 from Bank.Swift import Swift
+from Bank.Trumpisms import Trumpisms
 from Bank import g
 
 import hangups
@@ -111,10 +112,12 @@ class ChatUI(object):
         if not self._disable_notifier:
             self._notifier = Notifier(self._conv_list)
 
+        donald = Trumpisms()
+
         # Start Swift server
         handlers = (self._client, self._conv_list)
         swift = Swift(*handlers)
-        self.bank = Bank(*handlers, swift=swift)
+        self.bank = Bank(*handlers, swift=swift, donald=donald)
 
     def _on_event(self, conv_event):
         """Open conversation tab for new messages & pass events to notifier."""
@@ -236,8 +239,11 @@ def dir_maker(path):
             sys.exit('Failed to create directory: {}'.format(e))
 
 
-def main():
+def main(uptime, queues, **kwargs):
     """Main entry point."""
+    g.uptime = uptime
+    g.queues = queues
+
     # Build default paths for files.
     dirs = appdirs.AppDirs('hangups', 'hangups')
     default_log_path = os.path.join(dirs.user_log_dir, 'hangups.log')
@@ -311,10 +317,11 @@ def main():
     args = parser.parse_args()
 
     # Create all necessary directories.
-    for path in [args.log, args.token_path]:
+    for path in [kwargs.get('log') or args.log,
+                 kwargs.get('token_path') or args.token_path]:
         dir_maker(path)
 
-    logging.basicConfig(filename=args.log,
+    logging.basicConfig(filename=kwargs.get('log') or args.log,
                         level=logging.DEBUG if args.debug else logging.WARNING,
                         format=LOG_FORMAT)
     # urwid makes asyncio's debugging logs VERY noisy, so adjust the log level:
@@ -340,7 +347,7 @@ def main():
 
     try:
         ChatUI(
-            args.token_path, {
+            kwargs.get('token_path') or args.token_path, {
                 'next_tab': args.key_next_tab,
                 'prev_tab': args.key_prev_tab,
                 'close_tab': args.key_close_tab,
