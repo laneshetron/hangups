@@ -16,6 +16,7 @@ This code may be debugged by invoking it directly:
 import requests
 import logging
 import urllib.parse
+from Bank import g
 
 logger = logging.getLogger(__name__)
 # Set the logging level for requests to at least INFO, since the DEBUG level
@@ -170,11 +171,13 @@ def _get_session_cookies(access_token):
 def get_auth_stdin(refresh_token_filename):
     """Wrapper for get_auth that prompts the user on stdin."""
     def get_code_f():
-        """Prompt for and return credentials."""
-        print('To log in, open the following link in a browser and paste the '
-              'provided authorization code below:\n')
-        print(OAUTH2_LOGIN_URL)
-        auth_token = input('\nAuthorization Token: ')
+        auth_token = g.config['hangouts']['auth_token']
+        if not auth_token:
+            """Prompt for and return credentials."""
+            print('To log in, open the following link in a browser and paste the '
+                  'provided authorization code into your config.json and restart '
+                  'Monopoly.\n')
+            print(OAUTH2_LOGIN_URL)
         return auth_token
     return get_auth(get_code_f, refresh_token_filename)
 

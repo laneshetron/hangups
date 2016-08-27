@@ -7,8 +7,12 @@ import contextlib
 import logging
 import os
 import sys
-import urwid
+import urwid # unfortunate legacy garbage
 import readlike
+
+from Bank.Hangouts import Bank
+from Bank.Swift import Swift
+from Bank import g
 
 import hangups
 from hangups.ui.emoticon import replace_emoticons
@@ -24,6 +28,10 @@ if urwid.__version__ == '1.2.2-dev':
              'Please uninstall hangups-urwid and urwid, and reinstall '
              'hangups.')
 
+CONVERSATION_TYPE_ONE_TO_ONE = 1
+CONVERSATION_TYPE_GROUP = 2
+
+CONVERSATION_STATUS_ACTIVE = 2
 
 LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 COL_SCHEMES = {
@@ -66,12 +74,12 @@ class ChatUI(object):
         set_terminal_title('hangups')
 
         # These are populated by on_connect when it's called.
-        self._conv_widgets = {}  # {conversation_id: ConversationWidget}
-        self._tabbed_window = None  # TabbedWindowWidget
         self._conv_list = None  # hangups.ConversationList
         self._user_list = None  # hangups.UserList
+        self._notifier = None  # hangups.notify.Notifier
+        # Disable UI notifications by default
+        self._disable_notifier = True
 
-        # TODO Add urwid widget for getting auth.
         try:
             cookies = hangups.auth.get_auth_stdin(refresh_token_path)
         except hangups.GoogleAuthError as e:
@@ -81,14 +89,6 @@ class ChatUI(object):
         self._client.on_connect.add_observer(self._on_connect)
 
         loop = asyncio.get_event_loop()
-        self._urwid_loop = urwid.MainLoop(
-            LoadingWidget(), palette, handle_mouse=False,
-            input_filter=self._input_filter,
-            event_loop=urwid.AsyncioEventLoop(loop=loop)
-        )
-
-        self._urwid_loop.screen.set_terminal_properties(colors=palette_colors)
-        self._urwid_loop.start()
         # Enable bracketed paste mode after the terminal has been switched to
         # the alternate screen (after MainLoop.start() to work around bug
         # 729533 in VTE.
@@ -97,391 +97,53 @@ class ChatUI(object):
                 # Returns when the connection is closed.
                 loop.run_until_complete(self._client.connect())
             finally:
-                # Ensure urwid cleans up properly and doesn't wreck the
-                # terminal.
-                self._urwid_loop.stop()
                 loop.close()
 
-    def _input_filter(self, keys, _):
-        """Handle global keybindings."""
-        if keys == [self._keys['menu']]:
-            if self._urwid_loop.widget == self._tabbed_window:
-                self._show_menu()
-            else:
-                self._hide_menu()
-        elif keys == [self._keys['quit']]:
-            self._on_quit()
-        else:
-            return keys
-
-    def _show_menu(self):
-        """Show the overlay menu."""
-        # If the current widget in the TabbedWindowWidget has a menu,
-        # overlay it on the TabbedWindowWidget.
-        current_widget = self._tabbed_window.get_current_widget()
-        if hasattr(current_widget, 'get_menu_widget'):
-            menu_widget = current_widget.get_menu_widget(self._hide_menu)
-            overlay = urwid.Overlay(menu_widget, self._tabbed_window,
-                                    align='center', width=('relative', 80),
-                                    valign='middle', height=('relative', 80))
-            self._urwid_loop.widget = overlay
-
-    def _hide_menu(self):
-        """Hide the overlay menu."""
-        self._urwid_loop.widget = self._tabbed_window
-
-    def get_conv_widget(self, conv_id):
-        """Return an existing or new ConversationWidget."""
-        if conv_id not in self._conv_widgets:
-            set_title_cb = (lambda widget, title:
-                            self._tabbed_window.set_tab(widget, title=title))
-            widget = ConversationWidget(self._client,
-                                        self._conv_list.get(conv_id),
-                                        set_title_cb,
-                                        self._keys,
-                                        self._datetimefmt)
-            self._conv_widgets[conv_id] = widget
-        return self._conv_widgets[conv_id]
-
-    def add_conversation_tab(self, conv_id, switch=False):
-        """Add conversation tab if not present, and optionally switch to it."""
-        conv_widget = self.get_conv_widget(conv_id)
-        self._tabbed_window.set_tab(conv_widget, switch=switch,
-                                    title=conv_widget.title)
-
-    def on_select_conversation(self, conv_id):
-        """Called when the user selects a new conversation to listen to."""
-        # switch to new or existing tab for the conversation
-        self.add_conversation_tab(conv_id, switch=True)
 
     @asyncio.coroutine
     def _on_connect(self):
         """Handle connecting for the first time."""
+        print("Client connected.")
         self._user_list, self._conv_list = (
             yield from hangups.build_user_conversation_list(self._client)
         )
         self._conv_list.on_event.add_observer(self._on_event)
+        if not self._disable_notifier:
+            self._notifier = Notifier(self._conv_list)
 
-        # show the conversation menu
-        conv_picker = ConversationPickerWidget(self._conv_list,
-                                               self.on_select_conversation,
-                                               self._keys)
-        self._tabbed_window = TabbedWindowWidget(self._keys)
-        self._tabbed_window.set_tab(conv_picker, switch=True,
-                                    title='Conversations')
-        self._urwid_loop.widget = self._tabbed_window
+        # Start Swift server
+        handlers = (self._client, self._conv_list)
+        swift = Swift(*handlers)
+        self.bank = Bank(*handlers, swift=swift)
 
     def _on_event(self, conv_event):
         """Open conversation tab for new messages & pass events to notifier."""
         conv = self._conv_list.get(conv_event.conversation_id)
+
         user = conv.get_user(conv_event.user_id)
         add_tab = all((
             isinstance(conv_event, hangups.ChatMessageEvent),
             not user.is_self,
-            not conv.is_quiet,
         ))
+
+        # Set the client as active.
+        future = asyncio.async(self._client.set_active())
+        future.add_done_callback(lambda future: future.result())
+
+        # Mark the newest event as read.
+        future = asyncio.async(conv.update_read_timestamp())
+        future.add_done_callback(lambda future: future.result())
+
         if add_tab:
-            self.add_conversation_tab(conv_event.conversation_id)
-        # Handle notifications
-        if self._notifier is not None:
-            self._notifier.on_event(conv, conv_event)
+            asyncio.async(self.bank.receive(conv_event.text, conv, user))
+            print(conv_event.text)
+            print(user.full_name)
 
     def _on_quit(self):
         """Handle the user quitting the application."""
         future = asyncio.async(self._client.disconnect())
         future.add_done_callback(lambda future: future.result())
 
-
-class LoadingWidget(urwid.WidgetWrap):
-    """Widget that shows a loading indicator."""
-
-    def __init__(self):
-        # show message in the center of the screen
-        super().__init__(urwid.Filler(
-            urwid.Text('Connecting...', align='center')
-        ))
-
-
-class RenameConversationDialog(urwid.WidgetWrap):
-    """Dialog widget for renaming a conversation."""
-
-    def __init__(self, conversation, on_cancel, on_save):
-        self._conversation = conversation
-        edit = urwid.Edit(edit_text=get_conv_name(conversation))
-        items = [
-            urwid.Text('Rename conversation:'),
-            edit,
-            urwid.Button(
-                'Save',
-                on_press=lambda _: self._rename(edit.edit_text, on_save)
-            ),
-            urwid.Button('Cancel', on_press=lambda _: on_cancel()),
-        ]
-        list_walker = urwid.SimpleFocusListWalker(items)
-        list_box = urwid.ListBox(list_walker)
-        super().__init__(list_box)
-
-    def _rename(self, name, callback):
-        """Rename conversation and call callback."""
-        future = asyncio.async(self._conversation.rename(name))
-        future.add_done_callback(lambda future: future.result())
-        callback()
-
-
-class ConversationMenu(urwid.WidgetWrap):
-    """Menu for conversation actions."""
-
-    def __init__(self, conversation, close_callback, keybindings):
-        rename_dialog = RenameConversationDialog(
-            conversation,
-            lambda: frame.contents.__setitem__('body', (list_box, None)),
-            close_callback
-        )
-        items = [
-            urwid.Text(
-                'Conversation name: {}'.format(get_conv_name(conversation))
-            ),
-            urwid.Button(
-                'Change Conversation Name',
-                on_press=lambda _: frame.contents.__setitem__(
-                    'body', (rename_dialog, None)
-                )
-            ),
-            urwid.Divider('-'),
-            urwid.Button('Back', on_press=lambda _: close_callback()),
-        ]
-        list_walker = urwid.SimpleFocusListWalker(items)
-        list_box = urwid.ListBox(list_walker)
-        frame = urwid.Frame(list_box)
-        padding = urwid.Padding(frame, left=1, right=1)
-        line_box = urwid.LineBox(padding, title='Conversation Menu')
-        super().__init__(line_box)
-        self._keys = keybindings
-
-    def keypress(self, size, key):
-        # Handle alternate up/down keybindings
-        key = super().keypress(size, key)
-        if key == self._keys['down']:
-            super().keypress(size, 'down')
-        elif key == self._keys['up']:
-            super().keypress(size, 'up')
-        else:
-            return key
-
-
-class ConversationButton(urwid.WidgetWrap):
-    """Button that shows the name and unread message count of conversation."""
-
-    def __init__(self, conversation, on_press):
-        conversation.on_event.add_observer(self._on_event)
-        # Need to update on watermark notifications as well since no event is
-        # received when the user marks messages as read.
-        conversation.on_watermark_notification.add_observer(self._on_event)
-        self._conversation = conversation
-        self._button = urwid.Button(self._get_label(), on_press=on_press,
-                                    user_data=conversation.id_)
-        super().__init__(self._button)
-
-    def _get_label(self):
-        """Return the button's label generated from the conversation."""
-        return get_conv_name(self._conversation, show_unread=True)
-
-    def _on_event(self, _):
-        """Update the button's label when an event occurs."""
-        self._button.set_label(self._get_label())
-
-    @property
-    def last_modified(self):
-        """Last modified date of conversation, used for sorting."""
-        return self._conversation.last_modified
-
-
-class ConversationListWalker(urwid.SimpleFocusListWalker):
-    """ListWalker that maintains a list of ConversationButtons.
-
-    ConversationButtons are kept in order of last modified.
-    """
-
-    # pylint: disable=abstract-method
-
-    def __init__(self, conversation_list, on_select):
-        self._conversation_list = conversation_list
-        self._conversation_list.on_event.add_observer(self._on_event)
-        self._on_press = lambda button, conv_id: on_select(conv_id)
-        convs = sorted(conversation_list.get_all(), reverse=True,
-                       key=lambda c: c.last_modified)
-        buttons = [ConversationButton(conv, on_press=self._on_press)
-                   for conv in convs]
-        super().__init__(buttons)
-
-    def _on_event(self, _):
-        """Re-order the conversations when an event occurs."""
-        # TODO: handle adding new conversations
-        self.sort(key=lambda conv_button: conv_button.last_modified,
-                  reverse=True)
-
-
-class ConversationPickerWidget(urwid.WidgetWrap):
-    """ListBox widget for picking a conversation from a list."""
-
-    def __init__(self, conversation_list, on_select, keybindings):
-        list_walker = ConversationListWalker(conversation_list, on_select)
-        list_box = urwid.ListBox(list_walker)
-        widget = urwid.Padding(list_box, left=2, right=2)
-        super().__init__(widget)
-        self._keys = keybindings
-
-    def keypress(self, size, key):
-        # Handle alternate up/down keybindings
-        key = super().keypress(size, key)
-        if key == self._keys['down']:
-            super().keypress(size, 'down')
-        elif key == self._keys['up']:
-            super().keypress(size, 'up')
-        else:
-            return key
-
-
-class ReturnableEdit(urwid.Edit):
-    """Edit widget that clears itself and calls a function on return."""
-
-    def __init__(self, on_return, keybindings, caption=None):
-        super().__init__(caption=caption, multiline=True)
-        self._on_return = on_return
-        self._keys = keybindings
-        self._paste_mode = False
-
-    def keypress(self, size, key):
-        if key == 'begin paste':
-            self._paste_mode = True
-        elif key == 'end paste':
-            self._paste_mode = False
-        elif key == 'enter' and not self._paste_mode:
-            self._on_return(self.get_edit_text())
-            self.set_edit_text('')
-        elif key not in self._keys.values() and key in readlike.keys():
-            text, pos = readlike.edit(self.edit_text, self.edit_pos, key)
-            self.set_edit_text(text)
-            self.set_edit_pos(pos)
-        else:
-            return super().keypress(size, key)
-
-
-class StatusLineWidget(urwid.WidgetWrap):
-    """Widget for showing status messages.
-
-    If the client is disconnected, show a reconnecting message. If a temporary
-    message is showing, show the temporary message. If someone is typing, show
-    a typing messages.
-    """
-
-    _MESSAGE_DELAY_SECS = 10
-
-    def __init__(self, client, conversation):
-        self._typing_statuses = {}
-        self._conversation = conversation
-        self._conversation.on_event.add_observer(self._on_event)
-        self._conversation.on_typing.add_observer(self._on_typing)
-        self._widget = urwid.Text('', align='center')
-        self._is_connected = True
-        self._message = None
-        self._message_handle = None
-        client.on_disconnect.add_observer(self._on_disconnect)
-        client.on_reconnect.add_observer(self._on_reconnect)
-        super().__init__(urwid.AttrWrap(self._widget, 'status_line'))
-
-    def show_message(self, message_str):
-        """Show a temporary message."""
-        if self._message_handle is not None:
-            self._message_handle.cancel()
-        self._message_handle = asyncio.get_event_loop().call_later(
-            self._MESSAGE_DELAY_SECS, self._clear_message
-        )
-        self._message = message_str
-        self._update()
-
-    def _clear_message(self):
-        """Clear the temporary message."""
-        self._message = None
-        self._message_handle = None
-        self._update()
-
-    def _on_disconnect(self):
-        """Show reconnecting message when disconnected."""
-        self._is_connected = False
-        self._update()
-
-    def _on_reconnect(self):
-        """Hide reconnecting message when reconnected."""
-        self._is_connected = True
-        self._update()
-
-    def _on_event(self, conv_event):
-        """Make users stop typing when they send a message."""
-        if isinstance(conv_event, hangups.ChatMessageEvent):
-            self._typing_statuses[conv_event.user_id] = (
-                hangups.TYPING_TYPE_STOPPED
-            )
-            self._update()
-
-    def _on_typing(self, typing_message):
-        """Handle typing updates."""
-        self._typing_statuses[typing_message.user_id] = typing_message.status
-        self._update()
-
-    def _update(self):
-        """Update status text."""
-        typing_users = [self._conversation.get_user(user_id)
-                        for user_id, status in self._typing_statuses.items()
-                        if status == hangups.TYPING_TYPE_STARTED]
-        displayed_names = [user.first_name for user in typing_users
-                           if not user.is_self]
-        if len(displayed_names) > 0:
-            typing_message = '{} {} typing...'.format(
-                ', '.join(sorted(displayed_names)),
-                'is' if len(displayed_names) == 1 else 'are'
-            )
-        else:
-            typing_message = ''
-
-        if not self._is_connected:
-            self._widget.set_text("RECONNECTING...")
-        elif self._message is not None:
-            self._widget.set_text(self._message)
-        else:
-            self._widget.set_text(typing_message)
-
-
-class MessageWidget(urwid.WidgetWrap):
-
-    """Widget for displaying a single message in a conversation."""
-
-    def __init__(self, timestamp, text, datetimefmt, user=None,
-                 show_date=False):
-        # Save the timestamp as an attribute for sorting.
-        self.timestamp = timestamp
-        text = [
-            ('msg_date', self._get_date_str(timestamp, datetimefmt,
-                                            show_date=show_date) + ' '),
-            ('msg_text', text)
-        ]
-        if user is not None:
-            text.insert(1, ('msg_self' if user.is_self else 'msg_sender',
-                            user.first_name + ': '))
-        self._widget = urwid.Text(text)
-        super().__init__(self._widget)
-
-    @staticmethod
-    def _get_date_str(timestamp, datetimefmt, show_date=False):
-        """Convert UTC datetime into user interface string."""
-        fmt = ''
-        if show_date:
-            fmt += '\n'+datetimefmt.get('date', '')+'\n'
-        fmt += datetimefmt.get('time', '')
-        return timestamp.astimezone(tz=None).strftime(fmt)
-
-    def __lt__(self, other):
-        return self.timestamp < other.timestamp
 
     @staticmethod
     def from_conversation_event(conversation, conv_event, prev_conv_event,
@@ -547,306 +209,7 @@ class MessageWidget(urwid.WidgetWrap):
         else:
             # conv_event is a generic hangups.ConversationEvent.
             text = 'Unknown conversation event'
-            return MessageWidget(conv_event.timestamp, text, datetimefmt,
-                                 show_date=is_new_day)
-
-
-class ConversationEventListWalker(urwid.ListWalker):
-    """ListWalker for ConversationEvents.
-
-    The position may be an event ID or POSITION_LOADING.
-    """
-
-    POSITION_LOADING = 'loading'
-
-    def __init__(self, conversation, datetimefmt):
-        self._conversation = conversation  # Conversation
-        self._is_scrolling = False  # Whether the user is trying to scroll up
-        self._is_loading = False  # Whether we're currently loading more events
-        self._first_loaded = False  # Whether the first event is loaded
-        self._datetimefmt = datetimefmt
-
-        # Focus position is the first event ID, or POSITION_LOADING.
-        self._focus_position = (conversation.events[-1].id_
-                                if len(conversation.events) > 0
-                                else self.POSITION_LOADING)
-
-        self._conversation.on_event.add_observer(self._handle_event)
-
-    def _handle_event(self, conv_event):
-        """Handle updating and scrolling when a new event is added.
-
-        Automatically scroll down to show the new text if the bottom is
-        showing. This allows the user to scroll up to read previous messages
-        while new messages are arriving.
-        """
-        if not self._is_scrolling:
-            self.set_focus(conv_event.id_)
-        else:
-            self._modified()
-
-    @asyncio.coroutine
-    def _load(self):
-        """Load more events for this conversation."""
-        # Don't try to load while we're already loading.
-        if not self._is_loading and not self._first_loaded:
-            self._is_loading = True
-            try:
-                conv_events = yield from self._conversation.get_events(
-                    self._conversation.events[0].id_
-                )
-            except (IndexError, hangups.NetworkError):
-                conv_events = []
-            if len(conv_events) == 0:
-                self._first_loaded = True
-            if (self._focus_position == self.POSITION_LOADING and
-                    len(conv_events) > 0):
-                # If the loading indicator is still focused, and we loaded more
-                # events, set focus on the first new event so the loaded
-                # indicator is replaced.
-                self.set_focus(conv_events[-1].id_)
-            else:
-                # Otherwise, still need to invalidate in case the loading
-                # indicator is showing but not focused.
-                self._modified()
-            self._is_loading = False
-
-    def __getitem__(self, position):
-        """Return widget at position or raise IndexError."""
-        if position == self.POSITION_LOADING:
-            if self._first_loaded:
-                # TODO: Show the full date the conversation was created.
-                return urwid.Text('No more messages', align='center')
-            else:
-                future = asyncio.async(self._load())
-                future.add_done_callback(lambda future: future.result())
-                return urwid.Text('Loading...', align='center')
-        try:
-            # When creating the widget, also pass the previous event so a
-            # timestamp can be shown if this event occurred on a different day.
-            # Get the previous event, or None if it isn't loaded or doesn't
-            # exist.
-            prev_position = self._get_position(position, prev=True)
-            if prev_position == self.POSITION_LOADING:
-                prev_event = None
-            else:
-                prev_event = self._conversation.get_event(prev_position)
-            return MessageWidget.from_conversation_event(
-                self._conversation, self._conversation.get_event(position),
-                prev_event, self._datetimefmt
-            )
-        except KeyError:
-            raise IndexError('Invalid position: {}'.format(position))
-
-    def _get_position(self, position, prev=False):
-        """Return the next/previous position or raise IndexError."""
-        if position == self.POSITION_LOADING:
-            if prev:
-                raise IndexError('Reached last position')
-            else:
-                return self._conversation.events[0].id_
-        else:
-            ev = self._conversation.next_event(position, prev=prev)
-            if ev is None:
-                if prev:
-                    return self.POSITION_LOADING
-                else:
-                    raise IndexError('Reached first position')
-            else:
-                return ev.id_
-
-    def next_position(self, position):
-        """Return the position below position or raise IndexError."""
-        return self._get_position(position)
-
-    def prev_position(self, position):
-        """Return the position above position or raise IndexError."""
-        return self._get_position(position, prev=True)
-
-    def set_focus(self, position):
-        """Set the focus to position or raise IndexError."""
-        self._focus_position = position
-        self._modified()
-        # If we set focus to anywhere but the last position, the user if
-        # scrolling up:
-        try:
-            self.next_position(position)
-        except IndexError:
-            self._is_scrolling = False
-        else:
-            self._is_scrolling = True
-
-    def get_focus(self):
-        """Return (widget, position) tuple."""
-        return (self[self._focus_position], self._focus_position)
-
-
-class ConversationWidget(urwid.WidgetWrap):
-    """Widget for interacting with a conversation."""
-
-    def __init__(self, client, conversation, set_title_cb, keybindings,
-                 datetimefmt):
-        self._client = client
-        self._conversation = conversation
-        self._conversation.on_event.add_observer(self._on_event)
-        self._conversation.on_watermark_notification.add_observer(
-            self._on_watermark_notification
-        )
-        self._keys = keybindings
-
-        self.title = ''
-        self._set_title_cb = set_title_cb
-        self._set_title()
-
-        self._list_walker = ConversationEventListWalker(conversation,
-                                                        datetimefmt)
-        self._list_box = urwid.ListBox(self._list_walker)
-        self._status_widget = StatusLineWidget(client, conversation)
-        self._widget = urwid.Pile([
-            ('weight', 1, self._list_box),
-            ('pack', self._status_widget),
-            ('pack', ReturnableEdit(self._on_return, keybindings,
-                                    caption='Send message: ')),
-        ])
-        # focus the edit widget by default
-        self._widget.focus_position = 2
-
-        # Display any old ConversationEvents already attached to the
-        # conversation.
-        for event in self._conversation.events:
-            self._on_event(event)
-
-        super().__init__(self._widget)
-
-    def get_menu_widget(self, close_callback):
-        """Return the menu widget associated with this widget."""
-        return ConversationMenu(self._conversation, close_callback, self._keys)
-
-    def keypress(self, size, key):
-        """Handle marking messages as read and keeping client active."""
-        # Set the client as active.
-        future = asyncio.async(self._client.set_active())
-        future.add_done_callback(lambda future: future.result())
-
-        # Mark the newest event as read.
-        future = asyncio.async(self._conversation.update_read_timestamp())
-        future.add_done_callback(lambda future: future.result())
-
-        return super().keypress(size, key)
-
-    def _set_title(self):
-        """Update this conversation's tab title."""
-        self.title = get_conv_name(self._conversation, show_unread=True,
-                                   truncate=True)
-        self._set_title_cb(self, self.title)
-
-    def _on_return(self, text):
-        """Called when the user presses return on the send message widget."""
-        # Ignore if the user hasn't typed a message.
-        if len(text) == 0:
-            return
-        elif text.startswith('/image') and len(text.split(' ')) == 2:
-            # Temporary UI for testing image uploads
-            filename = text.split(' ')[1]
-            image_file = open(filename, 'rb')
-            text = ''
-        else:
-            image_file = None
-        text = replace_emoticons(text)
-        # XXX: Exception handling here is still a bit broken. Uncaught
-        # exceptions in _on_message_sent will only be logged.
-        segments = hangups.ChatMessageSegment.from_str(text)
-        asyncio.async(
-            self._conversation.send_message(segments, image_file=image_file)
-        ).add_done_callback(self._on_message_sent)
-
-    def _on_message_sent(self, future):
-        """Handle showing an error if a message fails to send."""
-        try:
-            future.result()
-        except hangups.NetworkError:
-            self._status_widget.show_message('Failed to send message')
-
-    def _on_watermark_notification(self, _):
-        """Handle watermark changes for this conversation."""
-        # Update the unread count in the title.
-        self._set_title()
-
-    def _on_event(self, _):
-        """Display a new conversation message."""
-        # Update the title in case unread count or conversation name changed.
-        self._set_title()
-
-
-class TabbedWindowWidget(urwid.WidgetWrap):
-
-    """A widget that displays a list of widgets via a tab bar."""
-
-    def __init__(self, keybindings):
-        self._widgets = []  # [urwid.Widget]
-        self._widget_title = {}  # {urwid.Widget: str}
-        self._tab_index = None  # int
-        self._keys = keybindings
-        self._tabs = urwid.Text('')
-        self._frame = urwid.Frame(None)
-        super().__init__(urwid.Pile([
-            ('pack', urwid.AttrWrap(self._tabs, 'tab_background')),
-            ('weight', 1, self._frame),
-        ]))
-
-    def get_current_widget(self):
-        """Return the widget in the current tab."""
-        return self._widgets[self._tab_index]
-
-    def _update_tabs(self):
-        """Update tab display."""
-        text = []
-        for num, widget in enumerate(self._widgets):
-            palette = ('active_tab' if num == self._tab_index
-                       else 'inactive_tab')
-            text += [
-                (palette, ' {} '.format(self._widget_title[widget])),
-                ('tab_background', ' '),
-            ]
-        self._tabs.set_text(text)
-        self._frame.contents['body'] = (self._widgets[self._tab_index], None)
-
-    def keypress(self, size, key):
-        """Handle keypresses for changing tabs."""
-        key = super().keypress(size, key)
-        num_tabs = len(self._widgets)
-        if key == self._keys['prev_tab']:
-            self._tab_index = (self._tab_index - 1) % num_tabs
-            self._update_tabs()
-        elif key == self._keys['next_tab']:
-            self._tab_index = (self._tab_index + 1) % num_tabs
-            self._update_tabs()
-        elif key == self._keys['close_tab']:
-            # Don't allow closing the Conversations tab
-            if self._tab_index > 0:
-                curr_tab = self._widgets[self._tab_index]
-                self._widgets.remove(curr_tab)
-                del self._widget_title[curr_tab]
-                self._tab_index -= 1
-                self._update_tabs()
-        else:
-            return key
-
-    def set_tab(self, widget, switch=False, title=None):
-        """Add or modify a tab.
-
-        If widget is not a tab, it will be added. If switch is True, switch to
-        this tab. If title is given, set the tab's title.
-        """
-        if widget not in self._widgets:
-            self._widgets.append(widget)
-            self._widget_title[widget] = ''
-        if switch:
-            self._tab_index = self._widgets.index(widget)
-        if title:
-            self._widget_title[widget] = title
-        self._update_tabs()
-
+            return None
 
 def set_terminal_title(title):
     """Use an xterm escape sequence to set the terminal title."""

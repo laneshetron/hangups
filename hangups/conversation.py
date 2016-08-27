@@ -511,7 +511,8 @@ class Conversation(object):
     def name(self):
         """The conversation's custom name, or None if it doesn't have one."""
         custom_name = self._conversation.name
-        return None if custom_name == '' else custom_name
+        default_name = ', '.join([user.first_name for user in self.users])
+        return default_name if custom_name == '' else custom_name
 
     @property
     def last_modified(self):
