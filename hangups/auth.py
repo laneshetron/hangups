@@ -63,22 +63,35 @@ class GoogleAuthError(Exception):
 def get_auth_stdin(refresh_token_filename):
     """Wrapper for get_auth that prompts the user on stdin."""
     refresh_token_cache = RefreshTokenCache(refresh_token_filename)
-    return get_auth(CredentialsPrompt(), refresh_token_cache)
+
+    email = g.config['hangouts']['email']
+    password = g.config['hangouts']['password']
+    return get_auth(CredentialsPrompt(email, password), refresh_token_cache)
 
 
 class CredentialsPrompt(object):
     """Callbacks for prompting user for their Google account credentials."""
+    def __init__(self, email=None, password=None):
+        self.email = email
+        self.password = password
 
-    @staticmethod
-    def get_email():
+    def _error(self):
+        error = 'To log in, please provide your Google account login credentials ' \
+                'in the corresponding fields in your config.json and restart ' \
+                'Monopoly.\n'
+        raise Exception('Missing account login credentials. \n{0}'.format(error))
+
+    def get_email(self):
         """Return Google account email address."""
-        print('Sign in with your Google account:')
-        return input('Email: ')
+        if self.email:
+            return self.email
+        self._error()
 
-    @staticmethod
-    def get_password():
+    def get_password(self):
         """Return Google account password."""
-        return getpass.getpass()
+        if self.password:
+            return self.password
+        self._error()
 
     @staticmethod
     def get_verification_code():
@@ -337,18 +350,6 @@ def _get_session_cookies(session, access_token):
         raise GoogleAuthError('MergeSession request failed: {}'.format(e))
 
 
-#def get_auth_stdin(refresh_token_filename):
-#    """Wrapper for get_auth that prompts the user on stdin."""
-#    def get_code_f():
-#        auth_token = g.config['hangouts']['auth_token']
-#        if not auth_token:
-#            """Prompt for and return credentials."""
-#            print('To log in, open the following link in a browser and paste the '
-#                  'provided authorization code into your config.json and restart '
-#                  'Monopoly.\n')
-#            print(OAUTH2_LOGIN_URL)
-#        return auth_token
-#    return get_auth(get_code_f, refresh_token_filename)
     cookies = session.cookies.get_dict(domain='.google.com')
     if cookies == {}:
         raise GoogleAuthError('Failed to find session cookies')
