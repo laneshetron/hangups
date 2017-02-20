@@ -13,8 +13,9 @@
 # All configuration values have a default; values that are commented out
 # serve to show the default.
 
-import sys
+import datetime
 import os
+import sys
 
 # Find __version__ without import that requires dependencies to be installed:
 exec(open(os.path.join(
@@ -28,6 +29,14 @@ exec(open(os.path.join(
 
 # -- General configuration ------------------------------------------------
 
+# warn about missing references
+nitpicky = True
+
+# make references to stdlib types work
+intersphinx_mapping = {
+    'python': ('https://docs.python.org/3', None),
+}
+
 # If your documentation needs a minimal Sphinx version, state it here.
 #needs_sphinx = '1.0'
 
@@ -37,7 +46,13 @@ exec(open(os.path.join(
 extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.viewcode',
+    'sphinx.ext.napoleon',
+    'sphinx.ext.intersphinx',
+    'sphinxcontrib.asyncio',
 ]
+
+# Use the same order for members as the source.
+autodoc_member_order = 'bysource'
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -53,7 +68,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'hangups'
-copyright = '2014-2016, Tom Dryer'
+copyright = '2014-{}, Tom Dryer'.format(datetime.datetime.now().year)
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the

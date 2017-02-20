@@ -44,6 +44,8 @@ COL_SCHEMES = {
         ('msg_sender', '', ''),
         ('msg_self', '', ''),
         ('msg_text', '', ''),
+        ('msg_text_self', '', ''),
+        ('msg_selected', 'standout', ''),
         ('status_line', 'standout', ''),
         ('tab_background', 'standout', ''),
     },
@@ -52,14 +54,18 @@ COL_SCHEMES = {
         ('inactive_tab', 'underline', 'light green'),
         ('msg_date', 'dark cyan', ''),
         ('msg_sender', 'dark blue', ''),
-        ('msg_self', 'light blue', ''),
+        ('msg_text_self', '', ''),
+        ('msg_self', 'dark green', ''),
         ('msg_text', '', ''),
+        ('msg_selected', 'standout', ''),
         ('status_line', 'standout', ''),
-        ('tab_background', 'underline', 'black'),
+        ('tab_background', 'black,standout,underline', 'light green'),
     },
 }
-COL_SCHEME_NAMES = ('active_tab', 'inactive_tab', 'msg_date', 'msg_sender',
-                    'msg_self', 'msg_text', 'status_line', 'tab_background')
+COL_SCHEME_NAMES = (
+    'active_tab', 'inactive_tab', 'msg_date', 'msg_sender', 'msg_self',
+    'msg_text', 'msg_text_self', 'status_line', 'tab_background'
+)
 
 
 class ChatUI(object):
@@ -141,6 +147,8 @@ class ChatUI(object):
             asyncio.async(self.bank.receive(conv_event.text, conv, user))
             print(conv_event.text)
             print(user.full_name)
+        callback()
+
 
     def _on_quit(self):
         """Handle the user quitting the application."""

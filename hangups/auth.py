@@ -57,20 +57,15 @@ USER_AGENT = 'hangups/{} ({} {})'.format(
 
 
 class GoogleAuthError(Exception):
-    """Exception raised when auth fails."""
-
-
-def get_auth_stdin(refresh_token_filename):
-    """Wrapper for get_auth that prompts the user on stdin."""
-    refresh_token_cache = RefreshTokenCache(refresh_token_filename)
-
-    email = g.config['hangouts']['email']
-    password = g.config['hangouts']['password']
-    return get_auth(CredentialsPrompt(email, password), refresh_token_cache)
+    """A Google authentication request failed."""
 
 
 class CredentialsPrompt(object):
-    """Callbacks for prompting user for their Google account credentials."""
+    """Callbacks for prompting user for their Google account credentials.
+
+    This implementation prompts the user in a terminal using standard in/out.
+    """
+
     def __init__(self, email=None, password=None):
         self.email = email
         self.password = password
@@ -95,18 +90,30 @@ class CredentialsPrompt(object):
 
     @staticmethod
     def get_verification_code():
-        """Return Google account verification code."""
+        """Prompt for verification code.
+
+        Returns:
+            str: Google account verification code.
+        """
         return input('Verification code: ')
 
 
 class RefreshTokenCache(object):
-    """File-based cache for refresh token."""
+    """File-based cache for refresh token.
+
+    Args:
+        filename (str): Path to file where refresh token will be cached.
+    """
 
     def __init__(self, filename):
         self._filename = filename
 
     def get(self):
-        """Return cached refresh_token loaded or None on failure."""
+        """Get cached refresh token.
+
+        Returns:
+            Cached refresh token, or ``None`` on failure.
+        """
         logger.info(
             'Loading refresh_token from %s', repr(self._filename)
         )
@@ -117,48 +124,73 @@ class RefreshTokenCache(object):
             logger.info('Failed to load refresh_token: %s', e)
 
     def set(self, refresh_token):
-        """Cache refresh_token string, ignoring any failure."""
+        """Cache a refresh token, ignoring any failure.
+
+        Args:
+            refresh_token (str): Refresh token to cache.
+        """
         logger.info('Saving refresh_token to %s', repr(self._filename))
         try:
             with open(self._filename, 'w') as f:
                 f.write(refresh_token)
         except IOError as e:
             logger.warning('Failed to save refresh_token: %s', e)
-        return refresh_token
 
 
 def get_auth(credentials_prompt, refresh_token_cache):
-    """Authenticate into Google and return session cookies as a dict.
+    """Authenticate with Google.
 
-    credentials_prompt is used if credentials are required to log in.
+    Args:
+        refresh_token_cache (RefreshTokenCache): Cache to use so subsequent
+            logins may not require credentials.
+        credentials_prompt (CredentialsPrompt): Prompt to use if credentials
+            are required to log in.
 
-    A refresh token is saved/loaded from refresh_token_cache if possible, so
-    subsequent logins may not require re-authenticating.
+    Returns:
+        dict: Google session cookies.
 
-    Raises GoogleAuthError on failure.
+    Raises:
+        GoogleAuthError: If authentication with Google fails.
     """
-    session = requests.Session()
-    session.headers = {'user-agent': USER_AGENT}
+    with requests.Session() as session:
+        session.headers = {'user-agent': USER_AGENT}
 
-    try:
-        logger.info('Authenticating with refresh token')
-        refresh_token = refresh_token_cache.get()
-        if refresh_token is None:
-            raise GoogleAuthError("Refresh token not found")
-        access_token = _auth_with_refresh_token(session, refresh_token)
-    except GoogleAuthError as e:
-        logger.info('Failed to authenticate using refresh token: %s', e)
-        logger.info('Authenticating with credentials')
-        authorization_code = _get_authorization_code(
-            session, credentials_prompt
-        )
-        access_token, refresh_token = _auth_with_code(
-            session, authorization_code
-        )
-        refresh_token_cache.set(refresh_token)
+        try:
+            logger.info('Authenticating with refresh token')
+            refresh_token = refresh_token_cache.get()
+            if refresh_token is None:
+                raise GoogleAuthError("Refresh token not found")
+            access_token = _auth_with_refresh_token(session, refresh_token)
+        except GoogleAuthError as e:
+            logger.info('Failed to authenticate using refresh token: %s', e)
+            logger.info('Authenticating with credentials')
+            authorization_code = _get_authorization_code(
+                session, credentials_prompt
+            )
+            access_token, refresh_token = _auth_with_code(
+                session, authorization_code
+            )
+            refresh_token_cache.set(refresh_token)
 
-    logger.info('Authentication successful')
-    return _get_session_cookies(session, access_token)
+        logger.info('Authentication successful')
+        return _get_session_cookies(session, access_token)
+
+
+def get_auth_stdin(refresh_token_filename):
+    """Simple wrapper for :func:`get_auth` that prompts the user using stdin.
+
+    Args:
+        refresh_token_filename (str): Path to file where refresh token will be
+            cached.
+
+    Raises:
+        GoogleAuthError: If authentication with Google fails.
+    """
+    refresh_token_cache = RefreshTokenCache(refresh_token_filename)
+
+    email = g.config['hangouts']['email']
+    password = g.config['hangouts']['password']
+    return get_auth(CredentialsPrompt(), refresh_token_cache)
 
 
 class Browser(object):

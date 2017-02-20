@@ -803,9 +803,10 @@ enum ConfigurationBitType {
   CONFIGURATION_BIT_TYPE_UNKNOWN_31 = 31;
   CONFIGURATION_BIT_TYPE_UNKNOWN_32 = 32;
   CONFIGURATION_BIT_TYPE_UNKNOWN_33 = 33;
-  CONFIGURATION_BIT_TYPE_UNKNOWN_34 = 34;
+  CONFIGURATION_BIT_TYPE_DESKTOP_AUTO_EMOJI_CONVERSION_ENABLED = 34;
   CONFIGURATION_BIT_TYPE_UNKNOWN_35 = 35;
   CONFIGURATION_BIT_TYPE_UNKNOWN_36 = 36;
+  CONFIGURATION_BIT_TYPE_DESKTOP_COMPACT_MODE_ENABLED = 38;
 }
 
 message ConfigurationBit {
@@ -1159,10 +1160,8 @@ message BlockNotification {
 }
 
 message SetNotificationSettingNotification {
+  repeated ConfigurationBit configuration_bit = 1;
   optional DesktopSoundSetting desktop_sound_setting = 2;
-
-  // TODO
-  // convert text to emoji setting
 }
 
 message RichPresenceEnabledStateNotification {
@@ -1432,6 +1431,17 @@ message SendChatMessageResponse {
   // unknown [] = 4;
 }
 
+message ModifyOTRStatusRequest {
+  optional RequestHeader request_header = 1;
+  optional OffTheRecordStatus otr_status = 3;
+  optional EventRequestHeader event_request_header = 5;
+}
+
+message ModifyOTRStatusResponse {
+  optional ResponseHeader response_header = 1;
+  optional Event created_event = 4;
+}
+
 message SendOffnetworkInvitationRequest {
   optional RequestHeader request_header = 1;
   optional OffnetworkAddress invitee_address = 2;
@@ -1552,6 +1562,9 @@ message SyncAllNewEventsResponse {
 
 message SyncRecentConversationsRequest {
   optional RequestHeader request_header = 1;
+  // Timestamp used for pagination, returns most recent conversations if not
+  // given.
+  optional uint64 last_event_timestamp = 2;
   optional uint64 max_conversations = 3;
   optional uint64 max_events_per_conversation = 4;
   repeated SyncFilter sync_filter = 5;

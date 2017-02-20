@@ -1086,6 +1086,7 @@ SetNotificationSettingNotification
 ============================= ====== ====================== ======== ===========
 Field                         Number Type                   Label    Description
 ============================= ====== ====================== ======== ===========
+:code:`configuration_bit`     1      `ConfigurationBit`_    repeated            
 :code:`desktop_sound_setting` 2      `DesktopSoundSetting`_ optional            
 ============================= ====== ====================== ======== ===========
 
@@ -1447,6 +1448,27 @@ Field                   Number Type              Label    Description
 :code:`created_event`   6      `Event`_          optional            
 ======================= ====== ================= ======== ===========
 
+ModifyOTRStatusRequest
+----------------------
+
+============================ ====== ===================== ======== ===========
+Field                        Number Type                  Label    Description
+============================ ====== ===================== ======== ===========
+:code:`request_header`       1      `RequestHeader`_      optional            
+:code:`otr_status`           3      `OffTheRecordStatus`_ optional            
+:code:`event_request_header` 5      `EventRequestHeader`_ optional            
+============================ ====== ===================== ======== ===========
+
+ModifyOTRStatusResponse
+-----------------------
+
+======================= ====== ================= ======== ===========
+Field                   Number Type              Label    Description
+======================= ====== ================= ======== ===========
+:code:`response_header` 1      `ResponseHeader`_ optional            
+:code:`created_event`   4      `Event`_          optional            
+======================= ====== ================= ======== ===========
+
 SendOffnetworkInvitationRequest
 -------------------------------
 
@@ -1640,14 +1662,15 @@ Field                      Number Type                 Label    Description
 SyncRecentConversationsRequest
 ------------------------------
 
-=================================== ====== ================ ======== ===========
-Field                               Number Type             Label    Description
-=================================== ====== ================ ======== ===========
-:code:`request_header`              1      `RequestHeader`_ optional            
-:code:`max_conversations`           3      uint64           optional            
-:code:`max_events_per_conversation` 4      uint64           optional            
-:code:`sync_filter`                 5      `SyncFilter`_    repeated            
-=================================== ====== ================ ======== ===========
+=================================== ====== ================ ======== ==============================================================================
+Field                               Number Type             Label    Description                                                                   
+=================================== ====== ================ ======== ==============================================================================
+:code:`request_header`              1      `RequestHeader`_ optional                                                                               
+:code:`last_event_timestamp`        2      uint64           optional Timestamp used for pagination, returns most recent conversations if not given.
+:code:`max_conversations`           3      uint64           optional                                                                               
+:code:`max_events_per_conversation` 4      uint64           optional                                                                               
+:code:`sync_filter`                 5      `SyncFilter`_    repeated                                                                               
+=================================== ====== ================ ======== ==============================================================================
 
 SyncRecentConversationsResponse
 -------------------------------
@@ -2063,47 +2086,48 @@ ConfigurationBitType
 
 A type of binary configuration option.
 
-========================================= ====== ===========
-Name                                      Number Description
-========================================= ====== ===========
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN`    0                 
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_1`  1                 
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_2`  2                 
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_3`  3                 
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_4`  4                 
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_5`  5                 
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_6`  6                 
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_7`  7                 
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_8`  8                 
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_9`  9                 
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_10` 10                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_11` 11                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_12` 12                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_13` 13                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_14` 14                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_15` 15                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_16` 16                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_17` 17                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_18` 18                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_19` 19                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_20` 20                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_21` 21                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_22` 22                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_23` 23                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_24` 24                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_25` 25                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_26` 26                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_27` 27                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_28` 28                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_29` 29                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_30` 30                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_31` 31                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_32` 32                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_33` 33                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_34` 34                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_35` 35                
-:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_36` 36                
-========================================= ====== ===========
+==================================================================== ====== ===========
+Name                                                                 Number Description
+==================================================================== ====== ===========
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN`                               0                 
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_1`                             1                 
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_2`                             2                 
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_3`                             3                 
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_4`                             4                 
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_5`                             5                 
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_6`                             6                 
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_7`                             7                 
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_8`                             8                 
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_9`                             9                 
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_10`                            10                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_11`                            11                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_12`                            12                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_13`                            13                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_14`                            14                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_15`                            15                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_16`                            16                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_17`                            17                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_18`                            18                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_19`                            19                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_20`                            20                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_21`                            21                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_22`                            22                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_23`                            23                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_24`                            24                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_25`                            25                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_26`                            26                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_27`                            27                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_28`                            28                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_29`                            29                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_30`                            30                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_31`                            31                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_32`                            32                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_33`                            33                
+:code:`CONFIGURATION_BIT_TYPE_DESKTOP_AUTO_EMOJI_CONVERSION_ENABLED` 34                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_35`                            35                
+:code:`CONFIGURATION_BIT_TYPE_UNKNOWN_36`                            36                
+:code:`CONFIGURATION_BIT_TYPE_DESKTOP_COMPACT_MODE_ENABLED`          38                
+==================================================================== ====== ===========
 
 RichPresenceType
 ----------------

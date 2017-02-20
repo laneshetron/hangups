@@ -4,8 +4,9 @@ import os
 import sys
 
 
-if sys.version_info < (3, 3):
-    raise RuntimeError("hangups requires Python 3.3+")
+if sys.version_info < (3, 4, 2):
+    # This is the minimum version supported by aiohttp.
+    raise RuntimeError("hangups requires Python 3.4.2+")
 
 
 # Find __version__ without import that requires dependencies to be installed:
@@ -18,7 +19,7 @@ class PytestCommand(TestCommand):
 
     def finalize_options(self):
         TestCommand.finalize_options(self)
-        self.test_args = []
+        self.test_args = ['hangups']
         self.test_suite = True
 
     def run_tests(self):
@@ -48,8 +49,8 @@ class Pep8Command(TestCommand):
         self.test_suite = True
 
     def run_tests(self):
-        import pep8
-        style_guide = pep8.StyleGuide(config_file='setup.cfg')
+        import pycodestyle
+        style_guide = pycodestyle.StyleGuide(config_file='setup.cfg')
         report = style_guide.check_files(['hangups'])
         if report.total_errors:
             sys.exit(1)
@@ -59,17 +60,20 @@ with open('README.rst') as f:
     readme = f.read()
 
 
+# Dependencies should be specified as a specific version or version range that
+# is unlikely to break compatibility in the future. This is required to prevent
+# hangups from breaking when new versions of dependencies are released,
+# especially for end-users (non-developers) who use pip to install hangups.
 install_requires = [
-    'ConfigArgParse==0.10.0',
-    'aiohttp==0.17.3',
+    'ConfigArgParse==0.11.0',
+    'aiohttp>=1.2,<1.3',
     'appdirs==1.4.0',
-    'readlike>=0.1',
-    'requests==2.6.0',
+    'readlike==0.1.2',
+    'requests>=2.6.0,<3',  # uses semantic versioning (after 2.6)
     'ReParser==1.4.3',
-    # use alpha protobuf for official Python 3 support
-    'protobuf==3.0.0a3',
+    'protobuf>=3.1.0,<3.2.0',
     'urwid==1.3.1',
-    'MechanicalSoup==0.4.0',
+    'MechanicalSoup==0.6.0',
 ]
 
 
@@ -96,19 +100,18 @@ setup(
         'Natural Language :: English',
         'License :: OSI Approved :: MIT License',
         'Programming Language :: Python :: 3 :: Only',
-        'Programming Language :: Python :: 3.3',
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
         'Topic :: Communications :: Chat',
         'Environment :: Console :: Curses',
     ],
     packages=['hangups', 'hangups.ui'],
     install_requires=install_requires,
     tests_require=[
-        # >= 2.7.3 required for Python 3.5 support
-        'pytest==2.8.7',
-        'pylint==1.5.4',
-        'pep8==1.7.0',
+        'pytest==3.0.5',
+        'pylint==1.6.4',
+        'pycodestyle==2.2.0',
         'httpretty==0.8.14',
     ],
     cmdclass={
