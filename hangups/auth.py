@@ -190,7 +190,7 @@ def get_auth_stdin(refresh_token_filename):
 
     email = g.config['hangouts']['email']
     password = g.config['hangouts']['password']
-    return get_auth(CredentialsPrompt(), refresh_token_cache)
+    return get_auth(CredentialsPrompt(email, password), refresh_token_cache)
 
 
 class Browser(object):
